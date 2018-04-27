@@ -2,8 +2,8 @@ import tensorflow as tf
 import numpy as np
 import random
 import pdb
-import math
-
+import math, time
+from sklearn.model_selection import KFold
 
 
 def Readdata(file_address,tot_time_points, height, width, true_label,class_num,in_channel):
@@ -48,7 +48,7 @@ out_channel = 15
 tot_time_points = 20
 class_num = 2
 #matrix_size = out_channel+1
-epoch_num = 500
+epoch_num = 240
 depth = 5
 reduced_spatial_dim = 256
 beta = 0.3
@@ -70,12 +70,13 @@ add_global = global_steps.assign_add(1)
 
 
 
-X = tf.placeholder(np.float32,shape = (batch_size,matrix_length,height,width,in_channel)) 
-y = tf.placeholder(np.float32,shape = (batch_size,class_num)) 
-
 
 Weights_rnn = []
 Bias_rnn = []
+
+
+X = tf.placeholder(np.float32,shape = (batch_size,matrix_length,height,width,in_channel)) 
+y = tf.placeholder(np.float32,shape = (batch_size,class_num)) 
 
 Weights_cnn = {
             'W1':tf.Variable(tf.random_normal([5,5,in_channel,10],stddev=1e-4)),
@@ -91,9 +92,9 @@ b2_1 = tf.Variable(tf.random_normal([1, class_num],stddev=np.sqrt(2./class_num))
 
 inputs_series = tf.unstack(tf.transpose(X,[1,0,2,3,4]))
 Fl_out = None
+tf.keras.backend.set_learning_phase(True)
 
 for current_X in inputs_series:
-    cov_mat = None
     ### CNN
     C1_bn = tf.keras.layers.BatchNormalization()(tf.nn.conv2d(current_X,Weights_cnn['W1'],[1,1,1,1],'SAME'))
     C1 = tf.nn.relu(C1_bn)
@@ -121,7 +122,7 @@ for current_X in inputs_series:
     
   
 lstm_out = tf.keras.layers.LSTM(units,return_sequences=False)(Fl_out)  
-predict_label = tf.nn.softmax( tf.add( tf.matmul ( lstm_out, W2_1 ), b2_1 ) )
+predict_label = tf.add( tf.matmul ( lstm_out, W2_1 ), b2_1 ) 
 loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
      logits = predict_label,
      labels = y
@@ -149,48 +150,54 @@ label = np.append(label0,label1,axis = 0)
 batch_data,batch_label = shuffle_to_batch(data,label,batch_size)
 
 batch_num = len(batch_data)
-
-loss_p = 0
-
-
+batch_num_idx = range(batch_num)
+k_fold = KFold(n_splits=10)
+final_acc_fold = np.zeros((10,1))
 with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
-    
-    print(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()]))
-    for epoch in range(epoch_num):
-        for batch_idx in range(batch_num):
+    final_acc = 0.
+    co = 0
+    for tr_indices, ts_indices in k_fold.split(batch_num_idx):
+        sess.run(tf.global_variables_initializer())
+        print(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()]))
+        start_time = time.time()
+        for epoch in range(epoch_num):
+            for batch_idx in tr_indices:
+                data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
+                label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
+                #pdb.set_trace()
+                #print batch_idx
+                #CL_,CC_ ,current_X_= sess.run([CL,CC,current_X],
+                #_, loss_ , predict_label_,Weights_,Rt_,Yt_,tt_,Phit_,Mt_,St_,yt_,ot_,Bias_,W2_,b2_,grad_= sess.run([train_step,loss,predict_label,Weights,Rt,Yt,tt,Phit,Mt,St,yt,ot,Bias,W2,b2,grad],
+                _, loss_, predict_, W2_1_,y_, acc_ = sess.run([train_step,loss,predict_label,W2_1,y,accuracy],
+                #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
+                         feed_dict={
+                               X:data_batch_in,
+                               y:label_batch_in,
+                                })
+                #pdb.set_trace()
+                # if not batch_idx%100:
+                #pdb.set_trace()
+                if math.isnan(loss_):
+                   print(grad_)
+                   pdb.set_trace()
+                else:
+                   print(loss_,acc_,epoch)
+                # print predict_label_
+        print(time.time()-start_time)
+        final_acc_fold[co] = 0.
+        for batch_idx in ts_indices:
             data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
             label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
-            #pdb.set_trace()
-            #print batch_idx
-            #CL_,CC_ ,current_X_= sess.run([CL,CC,current_X],
-            #_, loss_ , predict_label_,Weights_,Rt_,Yt_,tt_,Phit_,Mt_,St_,yt_,ot_,Bias_,W2_,b2_,grad_= sess.run([train_step,loss,predict_label,Weights,Rt,Yt,tt,Phit,Mt,St,yt,ot,Bias,W2,b2,grad],
-            _, loss_, predict_, W2_1_,y_, acc_ = sess.run([train_step,loss,predict_label,W2_1,y,accuracy],
-            #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
-                     feed_dict={
-                           X:data_batch_in,
-                           y:label_batch_in,
-                            })
-            #pdb.set_trace()
-            # if not batch_idx%100:
-            #pdb.set_trace()
-            if math.isnan(loss_):
-               print(grad_)
-               pdb.set_trace()
-            else:
-               print(loss_,acc_,epoch)
-            # print predict_label_
-    final_acc = 0.
-    for batch_idx in range(batch_num):
-        data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
-        label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
-        loss_, acc_ = sess.run([loss,accuracy],
-            #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
-                     feed_dict={
-                           X:data_batch_in,
-                           y:label_batch_in,
-                            })
-        final_acc = final_acc + 1.0*acc_/batch_num
-        print(loss_,acc_)
+            loss_, acc_ = sess.run([loss,accuracy],
+                #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
+                         feed_dict={
+                               X:data_batch_in,
+                               y:label_batch_in,
+                                })
+            final_acc_fold[co] = final_acc_fold[co] + 1.0*acc_/len(ts_indices)
+            print(loss_,acc_)
+        print('After kth fold' , final_acc_fold[co])
+        final_acc = final_acc + final_acc_fold[co]*1.0/10
+        co += 1
     print(final_acc)
-    np.save('lstm_10_15_reduced.npy',final_acc)
+    np.save('lstm_10_15.npy',final_acc_fold)

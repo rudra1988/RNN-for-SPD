@@ -3,6 +3,8 @@ import numpy as np
 import random
 import pdb
 import math
+import time
+from sklearn.model_selection import KFold
 
 from tensorflow.python.ops.distributions.util import fill_triangular
 
@@ -246,7 +248,7 @@ out_channel = 15
 tot_time_points = 20
 class_num = 2
 matrix_size = out_channel+1
-epoch_num = 500
+epoch_num = 50
 depth = 5
 reduced_spatial_dim = 256
 beta = 0.3
@@ -317,7 +319,7 @@ Mt_1 = initMt
 
 output_series = None
 inputs_series = tf.unstack(tf.transpose(X,[1,0,2,3,4]))
-
+tf.keras.backend.set_learning_phase(True)
 
 for current_X in inputs_series:
     cov_mat = None
@@ -390,7 +392,7 @@ for current_X in inputs_series:
 output_series = tf.slice(output_series,[(matrix_length-1)*n*(n+1)//2,0],[n*(n+1)//2,-1])
 output_series = tf.keras.layers.BatchNormalization()(tf.transpose(output_series,[1,0]))
 #output_series_1 = tf.nn.relu( tf.add( tf.matmul ( output_series, W2_1 ), b2_1 ) )
-predict_label = tf.nn.softmax( tf.add( tf.matmul ( output_series, W2_1 ), b2_1 ) )
+predict_label = tf.add( tf.matmul ( output_series, W2_1 ), b2_1 ) 
 #predict_label = tf.nn.softmax( tf.clip_by_value(tf.add( tf.matmul ( output_series_1, W2_2 ), b2_2 ), -50, 50) )
 #predict_label = tf.nn.softmax( tf.nn.tanh(tf.add( tf.matmul ( output_series_1, W2_2 ), b2_2 )) )
 
@@ -430,50 +432,59 @@ init_state = np.tile(np.eye(n)*1e-5,[batch_size,a_num,1,1])
 #init_state =  np.tile(1e-5 * np.random.uniform(low=0.0,high=1.0,size=(n,n)),[batch_size,a_num,1,1]) 
 loss_p = 0
 
-training_batch_num = int(batch_num*0.9)
-
+batch_num_idx = range(batch_num)
+k_fold = KFold(n_splits=10)
+final_acc_fold = np.zeros((10,1))
 #CL = Chol_de(current_X,n)
 #CC = Chol_com(CL,n,eps)
 
 with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
-    print(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()]))
-    for epoch in range(epoch_num):
-        for batch_idx in range(training_batch_num):
+    final_acc = 0.
+    co = 0
+    for tr_indices, ts_indices in k_fold.split(batch_num_idx):
+        sess.run(tf.global_variables_initializer())
+        print(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()]))
+        #start_time = time.time()
+        for epoch in range(epoch_num):
+            for batch_idx in tr_indices:
+                data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
+                label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
+                #pdb.set_trace()
+                #print batch_idx
+                #CL_,CC_ ,current_X_= sess.run([CL,CC,current_X],
+                #_, loss_ , predict_label_,Weights_,Rt_,Yt_,tt_,Phit_,Mt_,St_,yt_,ot_,Bias_,W2_,b2_,grad_= sess.run([train_step,loss,predict_label,Weights,Rt,Yt,tt,Phit,Mt,St,yt,ot,Bias,W2,b2,grad],
+                _, loss_, Weights_, Bias_, grad_, predict_, W2_1_,y_, acc_ = sess.run([train_step,loss,Weights_rnn, Bias_rnn,grad,predict_label,W2_1,y,accuracy],
+                #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
+                         feed_dict={
+                               X:data_batch_in,
+                               y:label_batch_in,
+                               initMt:init_state,
+                                })
+                #pdb.set_trace()
+                # if not batch_idx%100:
+                #pdb.set_trace()
+                if math.isnan(loss_):
+                   print(grad_)
+                   pdb.set_trace()
+                else:
+                   print(loss_,acc_,epoch)
+                # print predict_label_
+        #print(time.time()-start_time)
+        final_acc_fold[co] = 0.
+        for batch_idx in ts_indices:
             data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
             label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
-            #pdb.set_trace()
-            #print batch_idx
-            #CL_,CC_ ,current_X_= sess.run([CL,CC,current_X],
-            #_, loss_ , predict_label_,Weights_,Rt_,Yt_,tt_,Phit_,Mt_,St_,yt_,ot_,Bias_,W2_,b2_,grad_= sess.run([train_step,loss,predict_label,Weights,Rt,Yt,tt,Phit,Mt,St,yt,ot,Bias,W2,b2,grad],
-            _, loss_, Weights_, Bias_, grad_, predict_, W2_1_,y_, acc_ = sess.run([train_step,loss,Weights_rnn, Bias_rnn,grad,predict_label,W2_1,y,accuracy],
-            #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
-                     feed_dict={
-                           X:data_batch_in,
-                           y:label_batch_in,
-                           initMt:init_state,
-                            })
-            #pdb.set_trace()
-            # if not batch_idx%100:
-            #pdb.set_trace()
-            if math.isnan(loss_):
-               print(grad_)
-               pdb.set_trace()
-            else:
-               print(loss_,acc_,epoch)
-            # print predict_label_
-    final_acc = 0.
-    for batch_idx in range(training_batch_num, batch_num):
-        data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
-        label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
-        loss_, acc_ = sess.run([loss,accuracy],
-            #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
-                     feed_dict={
-                           X:data_batch_in,
-                           y:label_batch_in,
-                           initMt:init_state,
-                            })
-        final_acc = final_acc + 1.0*acc_/(batch_num-training_batch_num)
-        print(loss_,acc_)
+            loss_, acc_ = sess.run([loss,accuracy],
+                #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
+                         feed_dict={
+                               X:data_batch_in,
+                               y:label_batch_in,
+                               initMt:init_state,
+                                })
+            final_acc_fold[co] = final_acc_fold[co] + 1.0*acc_/len(ts_indices)
+            print(loss_,acc_)
+        print('After kth fold' , final_acc_fold[co])
+        final_acc = final_acc + final_acc_fold[co]*1.0/10
+        co += 1
     print(final_acc)
-    np.save('result_10_15.npy',final_acc)
+    np.save('result_10_15.npy',final_acc_fold)

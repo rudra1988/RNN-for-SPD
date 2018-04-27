@@ -3,7 +3,9 @@ import numpy as np
 import random
 import pdb
 import math
+import time
 from sru import SimpleSRUCell
+from sklearn.model_selection import KFold
 
 def Readdata(file_address,tot_time_points, height, width, true_label,class_num,in_channel):
     data = np.load(file_address)
@@ -48,11 +50,10 @@ width = 64
 in_channel = 5
 out_channel = 5#15
 tot_time_points = 20
-epoch_num = 500
+epoch_num = 240
 params_spatial_dim = 16#256
 class_num = 2
 matrix_size = 3
-epoch_num = 1000
 depth = 2
 
 eps = 1e-10
@@ -129,7 +130,7 @@ b2_1 = tf.Variable(tf.random_normal([      1      , class_num],stddev=np.sqrt(2.
 
 
 
-predict_label = tf.nn.softmax( tf.add( tf.matmul ( output_series, W2_1 ), b2_1 ) )
+predict_label = tf.add( tf.matmul ( output_series, W2_1 ), b2_1 ) 
 
 loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
     logits = predict_label,
@@ -154,45 +155,54 @@ batch_data,batch_label = shuffle_to_batch(data,label,batch_size)
 
 batch_num = len(batch_data)
 
-
-
+batch_num_idx = range(batch_num)
+k_fold = KFold(n_splits=10)
+final_acc_fold = np.zeros((10,1))
 with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
-    print(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()]))
-    for epoch in range(epoch_num):
-        for batch_idx in range(batch_num):
+    final_acc = 0.
+    co = 0
+    for tr_indices, ts_indices in k_fold.split(batch_num_idx):
+        sess.run(tf.global_variables_initializer())
+        print(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()]))
+        start_time = time.time()
+        for epoch in range(epoch_num):
+            for batch_idx in tr_indices:
+                data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
+                label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
+                #pdb.set_trace()
+                #print batch_idx
+                #CL_,CC_ ,current_X_= sess.run([CL,CC,current_X],
+                #_, loss_ , predict_label_,Weights_,Rt_,Yt_,tt_,Phit_,Mt_,St_,yt_,ot_,Bias_,W2_,b2_,grad_= sess.run([train_step,loss,predict_label,Weights,Rt,Yt,tt,Phit,Mt,St,yt,ot,Bias,W2,b2,grad],
+                _, loss_, predict_, W2_1_,y_, acc_ = sess.run([train_step,loss,predict_label,W2_1,y,accuracy],
+                #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
+                         feed_dict={
+                               X:data_batch_in,
+                               y:label_batch_in,
+                                })
+                #pdb.set_trace()
+                # if not batch_idx%100:
+                #pdb.set_trace()
+                if math.isnan(loss_):
+                   print(grad_)
+                   pdb.set_trace()
+                else:
+                   print(loss_,acc_,epoch)
+                # print predict_label_
+        print(time.time()-start_time)
+        final_acc_fold[co] = 0.
+        for batch_idx in ts_indices:
             data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
             label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
-            #pdb.set_trace()
-            #print batch_idx
-            #CL_,CC_ ,current_X_= sess.run([CL,CC,current_X],
-            #_, loss_ , predict_label_,Weights_,Rt_,Yt_,tt_,Phit_,Mt_,St_,yt_,ot_,Bias_,W2_,b2_,grad_= sess.run([train_step,loss,predict_label,Weights,Rt,Yt,tt,Phit,Mt,St,yt,ot,Bias,W2,b2,grad],
-            _, loss_, predict_, W2_1_,y_, acc_ = sess.run([train_step,loss,predict_label,W2_1,y,accuracy],
-            #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
-                     feed_dict={
-                           X:data_batch_in,
-                           y:label_batch_in,
-                            })
-            #pdb.set_trace()
-            # if not batch_idx%100:
-            #pdb.set_trace()
-            if math.isnan(loss_):
-               print(grad_)
-               pdb.set_trace()
-            else:
-               print(loss_,acc_)
-            # print predict_label_
-    final_acc = 0.
-    for batch_idx in range(batch_num):
-        data_batch_in = np.reshape(batch_data[batch_idx],[batch_size,matrix_length,height,width,in_channel])
-        label_batch_in = np.reshape(batch_label[batch_idx],[batch_size,class_num])
-        loss_, acc_ = sess.run([loss,accuracy],
-            #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
-                     feed_dict={
-                           X:data_batch_in,
-                           y:label_batch_in,
-                            })
-        final_acc = final_acc + 1.0*acc_/batch_num
-        print(loss_,acc_)
+            loss_, acc_ = sess.run([loss,accuracy],
+                #Yt_,Rt_,tt_,Phit_= sess.run([Yt,Rt,tt,Phit],
+                         feed_dict={
+                               X:data_batch_in,
+                               y:label_batch_in,
+                                })
+            final_acc_fold[co] = final_acc_fold[co] + 1.0*acc_/len(ts_indices)
+            print(loss_,acc_)
+        print('After kth fold' , final_acc_fold[co])
+        final_acc = final_acc + final_acc_fold[co]*1.0/10
+        co += 1
     print(final_acc)
-    np.save('sru_10_15.npy',final_acc)
+    np.save('sru_10_15.npy',final_acc_fold)
